@@ -342,8 +342,10 @@ class MultiModelEngine:
         """Load Z-Image model using local loader."""
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
         from utils import ensure_model_weights, load_from_local_dir
+        from .core import resolve_model_path
 
-        model_path = ensure_model_weights(self.model_info.repo_id, verify=False)
+        resolved = resolve_model_path()
+        model_path = ensure_model_weights(resolved, repo_id=self.model_info.repo_id, verify=False)
         self._local_path = model_path
 
         self._pipe = load_from_local_dir(
@@ -442,8 +444,11 @@ class MultiModelEngine:
     ):
         """Generate using Z-Image native pipeline."""
         from zimage import generate as zimage_generate
+        from .core import _detect_gpu_vram, _should_vae_offload
 
         generator = torch.Generator(self.device).manual_seed(seed)
+        gpu_vram = _detect_gpu_vram()
+        do_offload = _should_vae_offload(gpu_vram)
 
         images = zimage_generate(
             prompt=prompt,
@@ -453,6 +458,8 @@ class MultiModelEngine:
             num_inference_steps=num_inference_steps,
             guidance_scale=guidance_scale,
             generator=generator,
+            vae_offload=do_offload,
+            tiled_vae=do_offload,
         )
 
         return images[0]

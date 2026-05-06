@@ -71,6 +71,7 @@ Available models:
         help="Model key (z-image-turbo, flux-schnell, sdxl-turbo, etc.)",
     )
     gen_parser.add_argument("--low-vram", action="store_true", help="Low VRAM mode (VAE on CPU, decode on GPU)")
+    gen_parser.add_argument("--vae-offload", action="store_true", default=False, help="Offload transformer to CPU before VAE decode (auto-detected for GPUs <30GB)")
     gen_parser.add_argument("--reference-style", default="", help="Style reference description")
     gen_parser.add_argument("--reference-character", default="", help="Character reference description")
 
@@ -89,6 +90,7 @@ Available models:
         help="Model key (z-image-turbo, flux-schnell, sdxl-turbo, etc.)",
     )
     batch_parser.add_argument("--low-vram", action="store_true", help="Low VRAM mode")
+    batch_parser.add_argument("--vae-offload", action="store_true", default=False, help="Offload transformer before VAE decode")
     batch_parser.add_argument("--reference-style", default="")
     batch_parser.add_argument("--reference-character", default="")
     batch_parser.add_argument("--reference-file", default="")
@@ -110,6 +112,7 @@ Available models:
         help="Model key (z-image-turbo, flux-schnell, sdxl-turbo, etc.)",
     )
     series_parser.add_argument("--low-vram", action="store_true", help="Low VRAM mode")
+    series_parser.add_argument("--vae-offload", action="store_true", default=False, help="Offload transformer before VAE decode")
     series_parser.add_argument("--reference-style", default="")
     series_parser.add_argument("--reference-character", default="")
     series_parser.add_argument("--reference-file", default="")
@@ -197,6 +200,7 @@ def _cmd_generate(args):
         model_path=args.model,
         model_key=args.model_key,
         low_vram=args.low_vram,
+        vae_offload=args.vae_offload if args.vae_offload else None,
         reference_style=args.reference_style,
         reference_character=args.reference_character,
     )
@@ -217,6 +221,7 @@ def _cmd_batch(args):
         model_path=args.model,
         model_key=args.model_key,
         low_vram=args.low_vram,
+        vae_offload=args.vae_offload if args.vae_offload else None,
         reference_style=args.reference_style,
         reference_character=args.reference_character,
         reference_file=args.reference_file,
@@ -240,6 +245,7 @@ def _cmd_series(args):
         model_path=args.model,
         model_key=args.model_key,
         low_vram=args.low_vram,
+        vae_offload=args.vae_offload if args.vae_offload else None,
         reference_style=args.reference_style,
         reference_character=args.reference_character,
         reference_file=args.reference_file,

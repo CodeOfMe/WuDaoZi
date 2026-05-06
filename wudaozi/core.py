@@ -115,6 +115,19 @@ def resolve_model_path(explicit: str = "") -> str:
     return "ckpts/Z-Image-Turbo"
 
 
+def _detect_gpu_vram() -> int:
+    if not torch.cuda.is_available():
+        return 0
+    try:
+        return torch.cuda.get_device_properties(0).total_mem
+    except Exception:
+        return 0
+
+
+def _should_vae_offload(gpu_vram: int) -> bool:
+    return 0 < gpu_vram < 30 * 1024 ** 3
+
+
 class WuDaoZiEngine:
     def __init__(
         self,
@@ -124,6 +137,8 @@ class WuDaoZiEngine:
         compile_model: bool = False,
         attention_backend: Optional[str] = None,
         low_vram: bool = False,
+        vae_offload: Optional[bool] = None,
+        tiled_vae: Optional[bool] = None,
     ):
         self.model_path = resolve_model_path(model_path)
         self.device = device or select_device()
@@ -131,6 +146,15 @@ class WuDaoZiEngine:
         self.compile_model = compile_model
         self.attention_backend = attention_backend or os.environ.get("ZIMAGE_ATTENTION", "_native_flash")
         self.low_vram = low_vram or bool(int(os.environ.get("WUDAOZI_LOW_VRAM", "0")))
+        gpu_vram = _detect_gpu_vram()
+        if vae_offload is None:
+            self.vae_offload = _should_vae_offload(gpu_vram) if not self.low_vram else False
+        else:
+            self.vae_offload = vae_offload
+        if tiled_vae is None:
+            self.tiled_vae = self.vae_offload
+        else:
+            self.tiled_vae = tiled_vae
         self._components = None
         self._loaded = False
 
@@ -280,7 +304,6 @@ class WuDaoZiEngine:
 
             return image
 
-        # Original zimage generation
         generator = torch.Generator(self.device).manual_seed(seed)
         kwargs = dict(
             prompt=prompt,
@@ -290,6 +313,8 @@ class WuDaoZiEngine:
             num_inference_steps=num_inference_steps,
             guidance_scale=guidance_scale,
             generator=generator,
+            vae_offload=self.vae_offload,
+            tiled_vae=self.tiled_vae,
         )
         if negative_prompt and guidance_scale > 1.0:
             kwargs["negative_prompt"] = negative_prompt

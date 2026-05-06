@@ -10,7 +10,7 @@ from . import __version__
 _engine_cache = {}
 
 
-def _get_engine(model_path: str = "", low_vram: bool = False, model_key: str = "z-image-turbo"):
+def _get_engine(model_path: str = "", low_vram: bool = False, model_key: str = "z-image-turbo", vae_offload: Optional[bool] = None):
     """Get or create a cached engine instance."""
     if model_key and model_key != "z-image-turbo":
         from .model_manager import MultiModelEngine
@@ -20,11 +20,11 @@ def _get_engine(model_path: str = "", low_vram: bool = False, model_key: str = "
             _engine_cache[cache_key] = MultiModelEngine(model_key=model_key)
         return _engine_cache[cache_key]
 
-    cache_key = (model_path, low_vram)
+    cache_key = (model_path, low_vram, vae_offload)
     if cache_key not in _engine_cache:
         from .core import WuDaoZiEngine
 
-        _engine_cache[cache_key] = WuDaoZiEngine(model_path=model_path, low_vram=low_vram)
+        _engine_cache[cache_key] = WuDaoZiEngine(model_path=model_path, low_vram=low_vram, vae_offload=vae_offload)
     return _engine_cache[cache_key]
 
 
@@ -56,6 +56,7 @@ def generate_image(
     model_path: str = "",
     model_key: str = "z-image-turbo",
     low_vram: bool = False,
+    vae_offload: Optional[bool] = None,
     reference_style: str = "",
     reference_character: str = "",
 ) -> ToolResult:
@@ -72,6 +73,7 @@ def generate_image(
         model_path: Path to Z-Image model weights (for z-image-turbo only).
         model_key: Model key for multi-model support (z-image-turbo, flux-schnell, sdxl-turbo, etc.).
         low_vram: Enable low VRAM mode (8-bit quantization + CPU offload).
+        vae_offload: Offload transformer before VAE decode (auto-detect if None).
         reference_style: Style description to prepend to prompt.
         reference_character: Character description to prepend to prompt.
 
@@ -83,7 +85,7 @@ def generate_image(
     try:
         if not prompt.strip():
             return ToolResult(success=False, error="prompt cannot be empty")
-        engine = _get_engine(model_path=model_path, low_vram=low_vram, model_key=model_key)
+        engine = _get_engine(model_path=model_path, low_vram=low_vram, model_key=model_key, vae_offload=vae_offload)
         effective_prompt = prompt
         if reference_style or reference_character:
             ref = ReferenceProfile(
@@ -124,6 +126,7 @@ def batch_generate(
     model_path: str = "",
     model_key: str = "z-image-turbo",
     low_vram: bool = False,
+    vae_offload: Optional[bool] = None,
     reference_style: str = "",
     reference_character: str = "",
     reference_file: str = "",
@@ -141,6 +144,7 @@ def batch_generate(
         model_path: Path to Z-Image model weights (for z-image-turbo only).
         model_key: Model key for multi-model support (z-image-turbo, flux-schnell, sdxl-turbo, etc.).
         low_vram: Enable low VRAM mode (8-bit quantization + CPU offload).
+        vae_offload: Offload transformer before VAE decode (auto-detect if None).
         reference_style: Style description for all images.
         reference_character: Character description for all images.
         reference_file: Path to JSON reference profile file.
@@ -152,7 +156,7 @@ def batch_generate(
 
     try:
         prompts = read_prompts(prompts_file)
-        engine = _get_engine(model_path=model_path, low_vram=low_vram, model_key=model_key)
+        engine = _get_engine(model_path=model_path, low_vram=low_vram, model_key=model_key, vae_offload=vae_offload)
         config = GenerationConfig(
             height=height,
             width=width,
@@ -245,6 +249,7 @@ def create_series(
     model_path: str = "",
     model_key: str = "z-image-turbo",
     low_vram: bool = False,
+    vae_offload: Optional[bool] = None,
     reference_style: str = "",
     reference_character: str = "",
     reference_file: str = "",
@@ -264,6 +269,7 @@ def create_series(
         model_path: Path to Z-Image model weights (for z-image-turbo only).
         model_key: Model key for multi-model support (z-image-turbo, flux-schnell, sdxl-turbo, etc.).
         low_vram: Enable low VRAM mode (8-bit quantization + CPU offload).
+        vae_offload: Offload transformer before VAE decode (auto-detect if None).
         reference_style: Style description for series consistency.
         reference_character: Character description for series consistency.
         reference_file: Path to JSON reference profile file.
@@ -283,7 +289,7 @@ def create_series(
         if not name.strip():
             return ToolResult(success=False, error="name cannot be empty")
         prompts = read_prompts(prompts_file)
-        engine = _get_engine(model_path=model_path, low_vram=low_vram, model_key=model_key)
+        engine = _get_engine(model_path=model_path, low_vram=low_vram, model_key=model_key, vae_offload=vae_offload)
         config = GenerationConfig(
             height=height,
             width=width,

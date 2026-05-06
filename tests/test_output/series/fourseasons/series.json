@@ -1,0 +1,34 @@
+{
+  "name": "FourSeasons",
+  "theme": "Chinese landscape paintings of the four seasons",
+  "reference": {
+    "name": "FourSeasons",
+    "style": "traditional Chinese ink wash painting, elegant brushwork",
+    "character": "",
+    "reference_images": []
+  },
+  "config": {
+    "height": 768,
+    "width": 1024,
+    "num_inference_steps": 8,
+    "guidance_scale": 0.0,
+    "start_seed": 200
+  },
+  "works": [
+    {
+      "index": 1,
+      "path": "/home/fred/Documents/GitHub/Others/Z-Image/WuDaoZi/tests/test_output/series/fourseasons/001-a-koi-fish-leaping-from-a-tranquil-lotus-pond-at-golden-hour.png",
+      "prompt": "A koi fish leaping from a tranquil lotus pond at golden hour"
+    },
+    {
+      "index": 2,
+      "path": "/home/fred/Documents/GitHub/Others/Z-Image/WuDaoZi/tests/test_output/series/fourseasons/002-a-traditional-chinese-pavilion-nestled-among-cherry-blossoms.png",
+      "prompt": "A traditional Chinese pavilion nestled among cherry blossoms at dawn"
+    },
+    {
+      "index": 3,
+      "path": "/home/fred/Documents/GitHub/Others/Z-Image/WuDaoZi/tests/test_output/series/fourseasons/003-a-samurai-warrior-standing-on-a-cliff-overlooking-the-sea-at.png",
+      "prompt": "A samurai warrior standing on a cliff overlooking the sea at sunset"
+    }
+  ]
+}

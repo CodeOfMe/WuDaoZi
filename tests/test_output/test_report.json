@@ -1,0 +1,39 @@
+{
+  "gpu": "Radeon RX 7900 XTX",
+  "passed": 7,
+  "failed": 1,
+  "results": [
+    [
+      "test_single_generate",
+      "PASS"
+    ],
+    [
+      "test_batch_generate",
+      "PASS"
+    ],
+    [
+      "test_create_series",
+      "PASS"
+    ],
+    [
+      "test_multi_resolution",
+      "PASS"
+    ],
+    [
+      "test_tools_dispatch",
+      "PASS"
+    ],
+    [
+      "test_model_manager",
+      "FAIL: name 'os' is not defined"
+    ],
+    [
+      "test_load_reference",
+      "PASS"
+    ],
+    [
+      "test_engine_direct",
+      "PASS"
+    ]
+  ]
+}
