@@ -1,0 +1,44 @@
+{
+  "name": "山灵",
+  "theme": "中国神话",
+  "reference": {
+    "name": "山灵",
+    "style": "中国传统水墨画，写意笔法，宋代风格",
+    "character": "穿白色飘袍的仙女，长发如瀑，额间朱砂花钿",
+    "reference_images": []
+  },
+  "config": {
+    "height": 512,
+    "width": 512,
+    "num_inference_steps": 8,
+    "guidance_scale": 0.0,
+    "start_seed": 200
+  },
+  "works": [
+    {
+      "index": 1,
+      "path": "/home/fred/Documents/GitHub/Others/Z-Image/WuDaoZi/test_series/山灵/001-穿白色飘袍的仙女在云雾缭绕的山间抚琴-中国古代水墨画风格.png",
+      "prompt": "穿白色飘袍的仙女在云雾缭绕的山间抚琴，中国古代水墨画风格"
+    },
+    {
+      "index": 2,
+      "path": "/home/fred/Documents/GitHub/Others/Z-Image/WuDaoZi/test_series/山灵/002-一位仙人在瀑布旁修炼-周身仙气环绕-宋代山水画风格.png",
+      "prompt": "一位仙人在瀑布旁修炼，周身仙气环绕，宋代山水画风格"
+    },
+    {
+      "index": 3,
+      "path": "/home/fred/Documents/GitHub/Others/Z-Image/WuDaoZi/test_series/山灵/003-仙女在桃花树下翩翩起舞-花瓣纷飞-工笔重彩风格.png",
+      "prompt": "仙女在桃花树下翩翩起舞，花瓣纷飞，工笔重彩风格"
+    },
+    {
+      "index": 4,
+      "path": "/home/fred/Documents/GitHub/Others/Z-Image/WuDaoZi/test_series/山灵/004-云中仙鹤与仙女同行-远处仙山楼阁若隐若现.png",
+      "prompt": "云中仙鹤与仙女同行，远处仙山楼阁若隐若现"
+    },
+    {
+      "index": 5,
+      "path": "/home/fred/Documents/GitHub/Others/Z-Image/WuDaoZi/test_series/山灵/005-仙女手持玉瓶-瓶中流出银河-星辰漫天.png",
+      "prompt": "仙女手持玉瓶，瓶中流出银河，星辰漫天"
+    }
+  ]
+}
