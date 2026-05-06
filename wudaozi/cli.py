@@ -143,6 +143,11 @@ Available models:
 
     subparsers.add_parser("gui", help="Launch GUI studio")
 
+    web_parser = subparsers.add_parser("web", help="Launch Web UI (Gradio)")
+    web_parser.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
+    web_parser.add_argument("--port", type=int, default=7860, help="Port (default: 7860)")
+    web_parser.add_argument("--share", action="store_true", help="Create public URL via Gradio share")
+
     return parser
 
 
@@ -166,6 +171,8 @@ def main():
             _cmd_models(args)
         elif args.command == "gui":
             _cmd_gui(args)
+        elif args.command == "web":
+            _cmd_web(args)
         sys.exit(0)
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -372,3 +379,9 @@ def _cmd_gui(args):
     from .gui import run_gui
 
     run_gui()
+
+
+def _cmd_web(args):
+    from .web import run_web
+
+    run_web(host=args.host, port=args.port, share=args.share)
