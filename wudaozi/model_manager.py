@@ -8,6 +8,8 @@ from typing import Optional, Protocol
 import torch
 from loguru import logger
 
+from .core import resolve_model_path
+
 
 class ModelProtocol(Protocol):
     """Protocol for model pipelines."""
@@ -128,10 +130,12 @@ AVAILABLE_MODELS = {
 }
 
 
+_MODELS_ROOT = Path.cwd() / "models"
+
+
 def get_model_dir(model_key: str) -> Path:
-    """Get the local directory for a model."""
-    cache_dir = Path.home() / ".cache" / "wudaozi" / "models"
-    return cache_dir / model_key
+    """Get the local directory for a model under ./models/."""
+    return _MODELS_ROOT / model_key
 
 
 def list_models() -> list[ModelInfo]:
@@ -342,7 +346,6 @@ class MultiModelEngine:
         """Load Z-Image model using local loader."""
         sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
         from utils import ensure_model_weights, load_from_local_dir
-        from .core import resolve_model_path
 
         resolved = resolve_model_path()
         model_path = ensure_model_weights(resolved, repo_id=self.model_info.repo_id, verify=False)
@@ -494,34 +497,55 @@ class MultiModelEngine:
 
 def list_downloaded_models() -> list[str]:
     """List all downloaded models."""
-    cache_dir = Path.home() / ".cache" / "wudaozi" / "models"
-    if not cache_dir.exists():
-        return []
-
     downloaded = []
-    for model_key in AVAILABLE_MODELS:
-        model_dir = cache_dir / model_key
+    for model_key, info in AVAILABLE_MODELS.items():
+        model_dir = get_model_dir(model_key)
         if model_dir.exists() and any(model_dir.iterdir()):
             downloaded.append(model_key)
-
+    if (Path.cwd() / "Z-Image-Turbo" / "model_index.json").exists():
+        if "z-image-turbo" not in downloaded:
+            downloaded.append("z-image-turbo")
     return downloaded
+
+
+def is_downloaded(model_key: str) -> bool:
+    """Check if a specific model is downloaded."""
+    if model_key == "z-image-turbo":
+        resolved = resolve_model_path()
+        return Path(resolved).exists() and (Path(resolved) / "model_index.json").exists()
+    model_dir = get_model_dir(model_key)
+    return model_dir.exists() and any(model_dir.iterdir())
+
+
+def _resolve_model_path_for_size(model_key: str) -> Optional[Path]:
+    """Resolve the actual on-disk path for size calculation."""
+    if model_key == "z-image-turbo":
+        resolved = resolve_model_path()
+        p = Path(resolved)
+        if p.exists() and (p / "model_index.json").exists():
+            return p
+        return None
+    model_dir = get_model_dir(model_key)
+    if model_dir.exists() and any(model_dir.iterdir()):
+        return model_dir
+    return None
 
 
 def get_model_size(model_key: str) -> dict:
     """Get the size of a model on disk."""
-    model_dir = get_model_dir(model_key)
-    if not model_dir.exists():
-        return {"exists": False, "size_gb": 0.0}
+    model_path = _resolve_model_path_for_size(model_key)
+    if model_path is None:
+        return {"exists": False, "size_gb": 0.0, "path": ""}
 
     total_size = 0
-    for path in model_dir.rglob("*"):
+    for path in model_path.rglob("*"):
         if path.is_file():
             total_size += path.stat().st_size
 
     return {
         "exists": True,
         "size_gb": total_size / (1024**3),
-        "path": str(model_dir),
+        "path": str(model_path),
     }
 
 
