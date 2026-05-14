@@ -1,0 +1,274 @@
+{
+  "system": {
+    "timestamp": "2026-05-14T23:32:26.308659",
+    "python_version": "3.12.13 | packaged by Anaconda, Inc. | (main, Mar 19 2026, 20:20:58) [GCC 14.3.0]",
+    "torch_version": "2.11.0+rocm7.2",
+    "is_rocm": true,
+    "hip_version": "7.2.26015",
+    "device": "cuda",
+    "gpu_name": "Radeon RX 7900 XTX",
+    "gpu_vram_gb": 23.98,
+    "gpu_count": 1,
+    "compute_dtype": "torch.float16",
+    "gpu_properties": {
+      "name": "Radeon RX 7900 XTX",
+      "major": 11,
+      "minor": 0,
+      "total_memory_gb": 23.98,
+      "multi_processor_count": 48
+    }
+  },
+  "models_tested": 4,
+  "specs": [
+    {
+      "model_key": "z-image-turbo",
+      "name": "Z-Image-Turbo",
+      "model_type": "zimage",
+      "description": "Z-Image Turbo - Fast Chinese-style image generation",
+      "default_steps": 8,
+      "supports_guidance": false,
+      "quantization": null,
+      "estimated_size_gb": 12.0,
+      "actual_size_gb": 5.15,
+      "model_path": "/home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/models/z-image-turbo",
+      "modelscope_id": "Tongyi-MAI/Z-Image-Turbo",
+      "hf_id": "Tongyi-MAI/Z-Image-Turbo",
+      "pipeline_class": "ZImagePipeline",
+      "diffusers_version": "0.36.0.dev0",
+      "components": {
+        "scheduler": [
+          "diffusers",
+          "FlowMatchEulerDiscreteScheduler"
+        ],
+        "text_encoder": [
+          "transformers",
+          "Qwen3Model"
+        ],
+        "tokenizer": [
+          "transformers",
+          "Qwen2Tokenizer"
+        ],
+        "transformer": [
+          "diffusers",
+          "ZImageTransformer2DModel"
+        ],
+        "vae": [
+          "diffusers",
+          "AutoencoderKL"
+        ]
+      },
+      "file_count": 33,
+      "total_size_bytes": 5533465226,
+      "total_size_gb": 5.15
+    },
+    {
+      "model_key": "sdxl-turbo",
+      "name": "SDXL-Turbo",
+      "model_type": "sdxl",
+      "description": "SDXL-Turbo - Adversarial Diffusion Distillation, 1-4 steps",
+      "default_steps": 1,
+      "supports_guidance": false,
+      "quantization": null,
+      "estimated_size_gb": 6.5,
+      "actual_size_gb": 38.77,
+      "model_path": "/home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/models/sdxl-turbo",
+      "modelscope_id": "stabilityai/sdxl-turbo",
+      "hf_id": "stabilityai/sdxl-turbo",
+      "pipeline_class": "StableDiffusionXLPipeline",
+      "diffusers_version": "0.24.0.dev0",
+      "components": {
+        "feature_extractor": [
+          null,
+          null
+        ],
+        "force_zeros_for_empty_prompt": true,
+        "image_encoder": [
+          null,
+          null
+        ],
+        "scheduler": [
+          "diffusers",
+          "EulerAncestralDiscreteScheduler"
+        ],
+        "text_encoder": [
+          "transformers",
+          "CLIPTextModel"
+        ],
+        "text_encoder_2": [
+          "transformers",
+          "CLIPTextModelWithProjection"
+        ],
+        "tokenizer": [
+          "transformers",
+          "CLIPTokenizer"
+        ],
+        "tokenizer_2": [
+          "transformers",
+          "CLIPTokenizer"
+        ],
+        "unet": [
+          "diffusers",
+          "UNet2DConditionModel"
+        ],
+        "vae": [
+          "diffusers",
+          "AutoencoderKL"
+        ]
+      },
+      "file_count": 34,
+      "total_size_bytes": 41631893375,
+      "total_size_gb": 38.77
+    },
+    {
+      "model_key": "pixart-alpha",
+      "name": "PixArt-Alpha",
+      "model_type": "pixart",
+      "description": "PixArt-Alpha - 1024px, fast generation",
+      "default_steps": 20,
+      "supports_guidance": true,
+      "quantization": null,
+      "estimated_size_gb": 2.4,
+      "actual_size_gb": 36.33,
+      "model_path": "/home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/models/pixart-alpha",
+      "modelscope_id": "AI-ModelScope/PixArt-alpha",
+      "hf_id": "PixArt-alpha/PixArt-XL-2-1024-MS",
+      "file_count": 21,
+      "total_size_bytes": 39005259504,
+      "total_size_gb": 36.33
+    },
+    {
+      "model_key": "kolors",
+      "name": "Kolors",
+      "model_type": "kolors",
+      "description": "Kolors - Kwai fast image generation",
+      "default_steps": 20,
+      "supports_guidance": true,
+      "quantization": null,
+      "estimated_size_gb": 13.0,
+      "actual_size_gb": 26.99,
+      "model_path": "/home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/models/kolors",
+      "modelscope_id": "Kwai-Kolors/Kolors",
+      "hf_id": "Kwai-Kolors/Kolors",
+      "pipeline_class": "StableDiffusionXLPipeline",
+      "diffusers_version": "0.18.0.dev0",
+      "components": {
+        "force_zeros_for_empty_prompt": true,
+        "scheduler": [
+          "diffusers",
+          "EulerDiscreteScheduler"
+        ],
+        "text_encoder": [
+          "kolors",
+          "ChatGLMModel"
+        ],
+        "tokenizer": [
+          "kolors",
+          "ChatGLMTokenizer"
+        ],
+        "unet": [
+          "diffusers",
+          "UNet2DConditionModel"
+        ],
+        "vae": [
+          "diffusers",
+          "AutoencoderKL"
+        ]
+      },
+      "file_count": 44,
+      "total_size_bytes": 28976889561,
+      "total_size_gb": 26.99
+    }
+  ],
+  "results": [
+    {
+      "model_key": "z-image-turbo",
+      "success": false,
+      "error": "/home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/models/z-image-turbo/transformer/ does not appear to have a file named /home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/models/z-image-turbo/transformer/diffusion_pytorch_model-00001-of-00003.safetensors which is required according to the checkpoint index.",
+      "load_time_s": null,
+      "generate_time_s": null,
+      "peak_vram_gb": null,
+      "output_image": null,
+      "image_size": null
+    },
+    {
+      "model_key": "sdxl-turbo",
+      "success": true,
+      "error": null,
+      "load_time_s": 4.06,
+      "generate_time_s": 3.48,
+      "peak_vram_gb": 9.76,
+      "output_image": "/home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/test_output/model_benchmark/sdxl-turbo_test.png",
+      "image_size": [
+        1024,
+        1024
+      ]
+    },
+    {
+      "model_key": "pixart-alpha",
+      "success": false,
+      "error": "Error no file named model_index.json found in directory /home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/models/pixart-alpha.",
+      "load_time_s": null,
+      "generate_time_s": null,
+      "peak_vram_gb": null,
+      "output_image": null,
+      "image_size": null
+    },
+    {
+      "model_key": "kolors",
+      "success": false,
+      "error": "\nKolorsPipeline requires the sentencepiece library but it was not found in your environment. You can install it with pip: `pip install sentencepiece`\n",
+      "load_time_s": null,
+      "generate_time_s": null,
+      "peak_vram_gb": null,
+      "output_image": null,
+      "image_size": null
+    }
+  ],
+  "additional_notes": {
+    "z-image-turbo": "Model download incomplete - transformer sharded weights missing from ModelScope. Original Tongyi-MAI repo also missing shard files. Requires full download from HuggingFace.",
+    "pixart-alpha": "Downloaded ComfyUI format (.pth files) instead of diffusers format. PixArt-alpha-diffusers directory has partial diffusers format download (1.8GB).",
+    "kolors": "Model downloaded successfully (27GB). Requires sentencepiece library (installed). May need Kolors-specific pipeline configuration.",
+    "sdxl-turbo": "FULLY WORKING - Successfully loaded and generated 1024x1024 image in 3.5s on ROCm 7900 XTX with 9.8GB peak VRAM."
+  },
+  "test_environment": {
+    "conda_env": "rocm",
+    "gpu": "AMD Radeon RX 7900 XTX 24GB",
+    "rocm_version": "7.2",
+    "pytorch_version": "2.11.0+rocm7.2",
+    "diffusers_version": "0.38.0",
+    "transformers_version": "4.57.6",
+    "modelscope_version": "1.36.3",
+    "python_version": "3.12.13",
+    "os": "Linux"
+  },
+  "model_download_summary": {
+    "z-image-turbo": {
+      "source": "ModelScope (Tongyi-MAI/Z-Image-Turbo)",
+      "size": "5.2GB (incomplete)",
+      "status": "FAILED - missing transformer shard files",
+      "modelscope_id": "Tongyi-MAI/Z-Image-Turbo"
+    },
+    "sdxl-turbo": {
+      "source": "ModelScope (stabilityai/sdxl-turbo)",
+      "size": "39GB (complete)",
+      "status": "SUCCESS",
+      "load_time": "4.1s",
+      "generate_time": "3.5s (8 steps, 1024x1024)",
+      "peak_vram": "9.8GB",
+      "modelscope_id": "stabilityai/sdxl-turbo"
+    },
+    "pixart-alpha": {
+      "source": "ModelScope (AI-ModelScope/PixArt-alpha)",
+      "size": "37GB (ComfyUI format)",
+      "status": "FAILED - wrong format",
+      "diffusers_download": "1.8GB (incomplete)",
+      "hf_id": "PixArt-alpha/PixArt-XL-2-1024-MS"
+    },
+    "kolors": {
+      "source": "ModelScope (Kwai-Kolors/Kolors)",
+      "size": "27GB (complete)",
+      "status": "FAILED - missing sentencepiece at test time (now installed)",
+      "modelscope_id": "Kwai-Kolors/Kolors"
+    }
+  }
+}

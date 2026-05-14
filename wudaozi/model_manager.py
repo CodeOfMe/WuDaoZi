@@ -1,8 +1,11 @@
 """Model manager for downloading and managing multiple quantized image generation models.
 
 Supports downloading from ModelScope (preferred for China users) and HuggingFace (fallback).
+Optimized for ROCm/AMD GPUs (7900 XTX etc.) with unified interface.
 """
 
+import gc
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,20 +14,57 @@ from typing import Optional, Protocol
 import torch
 from loguru import logger
 
-from .core import resolve_model_path
-
 _DEFAULT_SOURCE = "modelscope"
 
-_DOWNLOAD_SOURCES = {
-    "modelscope": {
-        "name": "ModelScope",
-        "env_var": "WUDAOZI_DOWNLOAD_SOURCE",
-    },
-    "huggingface": {
-        "name": "HuggingFace",
-        "env_var": "WUDAOZI_DOWNLOAD_SOURCE",
-    },
-}
+_PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+
+_MODELS_ROOT = Path(os.environ.get("WUDAOZI_MODELS_DIR", str(_PACKAGE_ROOT / "models")))
+
+
+def _is_rocm() -> bool:
+    """Detect if running on ROCm/AMD GPU."""
+    if not torch.cuda.is_available():
+        return False
+    try:
+        return hasattr(torch.version, "hip") and torch.version.hip is not None
+    except Exception:
+        return False
+
+
+def _detect_device() -> str:
+    """Detect best available device, with ROCm awareness."""
+    if torch.cuda.is_available():
+        return "cuda"
+    try:
+        import torch_xla.core.xla_model as xm
+        return str(xm.xla_device())
+    except (ImportError, RuntimeError):
+        if torch.backends.mps.is_available():
+            return "mps"
+    return "cpu"
+
+
+def _get_compute_dtype(device: str, model_type: str = "") -> torch.dtype:
+    """Get optimal compute dtype for device and model type."""
+    if device == "cpu":
+        return torch.float32
+    if _is_rocm():
+        return torch.float16
+    if model_type in ("flux", "zimage", "kolors"):
+        return torch.bfloat16
+    return torch.float16
+
+
+def _get_gpu_vram_gb() -> float:
+    """Get GPU VRAM in GB."""
+    if not torch.cuda.is_available():
+        return 0.0
+    try:
+        props = torch.cuda.get_device_properties(0)
+        total = getattr(props, "total_memory", getattr(props, "total_mem", 0))
+        return total / (1024 ** 3)
+    except Exception:
+        return 0.0
 
 
 class ModelProtocol(Protocol):
@@ -94,7 +134,7 @@ AVAILABLE_MODELS = {
         default_steps=1,
         supports_guidance=False,
         size_gb=6.5,
-        modelscope_id="AI-ModelScope/stable-diffusion-xl-turbo",
+        modelscope_id="stabilityai/sdxl-turbo",
         hf_id="stabilityai/sdxl-turbo",
     ),
     "sdxl-turbo-fp16": ModelInfo(
@@ -106,7 +146,7 @@ AVAILABLE_MODELS = {
         supports_guidance=False,
         quantization="fp16",
         size_gb=6.5,
-        modelscope_id="AI-ModelScope/stable-diffusion-xl-turbo",
+        modelscope_id="stabilityai/sdxl-turbo",
         hf_id="stabilityai/sdxl-turbo",
     ),
     "playground-v2": ModelInfo(
@@ -117,7 +157,7 @@ AVAILABLE_MODELS = {
         default_steps=20,
         supports_guidance=True,
         size_gb=5.5,
-        modelscope_id="AI-ModelScope/playground-v2.5-1024px",
+        modelscope_id="",
         hf_id="playgroundai/playground-v2-1024px",
     ),
     "pixart-alpha": ModelInfo(
@@ -168,11 +208,8 @@ AVAILABLE_MODELS = {
 }
 
 
-_MODELS_ROOT = Path.cwd() / "models"
-
-
 def get_model_dir(model_key: str) -> Path:
-    """Get the local directory for a model under ./models/."""
+    """Get the local directory for a model under <package>/models/."""
     return _MODELS_ROOT / model_key
 
 
@@ -191,7 +228,6 @@ def _get_download_source() -> str:
 
     Priority: WUDAOZI_DOWNLOAD_SOURCE env var > defaults to modelscope.
     """
-    import os
     source = os.environ.get("WUDAOZI_DOWNLOAD_SOURCE", "").strip().lower()
     if source in ("huggingface", "hf"):
         return "huggingface"
@@ -199,7 +235,7 @@ def _get_download_source() -> str:
 
 
 def download_model(model_key: str, force: bool = False, source: str = "") -> Path:
-    """Download a model from ModelScope (preferred) or HuggingFace.
+    """Download a model from ModelScope (preferred) or HuggingFace to models/ directory.
 
     Args:
         model_key: Key of the model to download
@@ -227,42 +263,74 @@ def download_model(model_key: str, force: bool = False, source: str = "") -> Pat
     if source == "huggingface":
         return _download_from_huggingface(model_info, target_dir)
     else:
-        try:
-            return _download_from_modelscope(model_info, target_dir)
-        except Exception as e:
-            logger.warning(f"ModelScope download failed: {e}")
-            logger.info("Falling back to HuggingFace...")
-            return _download_from_huggingface(model_info, target_dir)
+        if not model_info.modelscope_id:
+            raise ValueError(
+                f"No ModelScope ID for {model_info.name}. "
+                f"Use --source huggingface or set WUDAOZI_DOWNLOAD_SOURCE=huggingface"
+            )
+        return _download_from_modelscope(model_info, target_dir)
+
+
+_IGNORE_PATTERNS = [
+    "*.onnx",
+    "*.onnx_data",
+    "*/model.onnx*",
+    "*.msgpack",
+]
 
 
 def _download_from_modelscope(model_info: ModelInfo, target_dir: Path) -> Path:
-    """Download model from ModelScope."""
+    """Download model from ModelScope to models/ directory.
+
+    Only downloads safetensors and config files, skipping ONNX/bin/msgpack.
+    """
     from modelscope import snapshot_download as ms_snapshot_download
 
     ms_id = model_info.modelscope_id
     if not ms_id:
         raise ValueError(f"No ModelScope ID for {model_info.name}, use HuggingFace instead")
 
+    cache_dir = str(_MODELS_ROOT / ".cache" / "modelscope")
     logger.info(f"Downloading {model_info.name} from ModelScope ({ms_id})...")
+    logger.info(f"  Target: {target_dir}")
+    logger.info(f"  Cache: {cache_dir}")
     try:
         ms_snapshot_download(
             model_id=ms_id,
             local_dir=str(target_dir),
+            cache_dir=cache_dir,
+            ignore_file_pattern=_IGNORE_PATTERNS,
         )
         logger.success(f"Downloaded {model_info.name} from ModelScope to {target_dir}")
     except Exception as e:
-        logger.error(f"ModelScope download failed: {e}")
-        raise
+        # Fallback: try without ignore pattern for older modelscope versions
+        logger.warning(f"Ignore pattern not supported, retrying without filter: {e}")
+        try:
+            ms_snapshot_download(
+                model_id=ms_id,
+                local_dir=str(target_dir),
+                cache_dir=cache_dir,
+            )
+            logger.success(f"Downloaded {model_info.name} from ModelScope to {target_dir}")
+        except Exception as e2:
+            logger.error(f"ModelScope download failed: {e2}")
+            raise
 
     return target_dir
 
 
 def _download_from_huggingface(model_info: ModelInfo, target_dir: Path) -> Path:
-    """Download model from HuggingFace."""
+    """Download model from HuggingFace to models/ directory.
+
+    Only downloads safetensors and config files, skipping ONNX/bin/msgpack.
+    """
     from huggingface_hub import snapshot_download
 
     hf_id = model_info.hf_id or model_info.repo_id
+    cache_dir = str(_MODELS_ROOT / ".cache" / "huggingface")
     logger.info(f"Downloading {model_info.name} from HuggingFace ({hf_id})...")
+    logger.info(f"  Target: {target_dir}")
+    logger.info(f"  Cache: {cache_dir}")
 
     try:
         snapshot_download(
@@ -270,6 +338,8 @@ def _download_from_huggingface(model_info: ModelInfo, target_dir: Path) -> Path:
             local_dir=str(target_dir),
             local_dir_use_symlinks=False,
             resume_download=True,
+            cache_dir=cache_dir,
+            ignore_patterns=_IGNORE_PATTERNS,
         )
         logger.success(f"Downloaded {model_info.name} from HuggingFace to {target_dir}")
     except Exception as e:
@@ -306,7 +376,11 @@ def download_quantized_model(
 
 
 class MultiModelEngine:
-    """Engine that supports multiple image generation models."""
+    """Engine that supports multiple image generation models with ROCm/AMD GPU support.
+
+    Unified interface for all model types. Automatically detects ROCm and configures
+    optimal dtype and memory settings for AMD GPUs like 7900 XTX.
+    """
 
     def __init__(self, model_key: str = "z-image-turbo", device: Optional[str] = None):
         self.model_key = model_key
@@ -314,16 +388,25 @@ class MultiModelEngine:
         if not self.model_info:
             raise ValueError(f"Unknown model: {model_key}")
 
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = device or _detect_device()
+        self.dtype = _get_compute_dtype(self.device, self.model_info.model_type)
+        self.is_rocm = _is_rocm()
+        self.gpu_vram_gb = _get_gpu_vram_gb()
         self._pipe = None
         self._local_path: Optional[Path] = None
 
+        if self.is_rocm:
+            logger.info(f"ROCm detected: {torch.cuda.get_device_name(0)}, "
+                        f"VRAM: {self.gpu_vram_gb:.1f} GB, dtype: {self.dtype}")
+
     def load(self, low_vram: bool = False) -> None:
-        """Load the model."""
+        """Load the model with automatic ROCm optimization."""
         if self._pipe is not None:
             return
 
         model_type = self.model_info.model_type
+        logger.info(f"Loading {self.model_info.name} (type={model_type}) on {self.device}, "
+                    f"dtype={self.dtype}, rocm={self.is_rocm}")
 
         if model_type == "flux":
             self._load_flux(low_vram)
@@ -333,10 +416,28 @@ class MultiModelEngine:
             self._load_pixart(low_vram)
         elif model_type == "kolors":
             self._load_kolors(low_vram)
-        elif model_type == "zimage":
-            self._load_zimage()
+        elif model_type in ("zimage", "flow"):
+            self._load_diffusers_pipeline(low_vram)
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
+
+    def _optimize_for_rocm(self) -> None:
+        """Apply ROCm-specific optimizations for AMD GPUs."""
+        if not self.is_rocm:
+            return
+        os.environ.setdefault("PYTORCH_HIP_ALLOC_CONF", "expandable_segments:True")
+        torch.cuda.empty_cache()
+        gc.collect()
+        logger.debug("ROCm optimizations applied: expandable_segments enabled")
+
+    def _offload_model(self, low_vram: bool) -> None:
+        """Apply memory offloading based on VRAM and low_vram setting."""
+        if low_vram or self.gpu_vram_gb < 16:
+            self._pipe.enable_model_cpu_offload()
+            logger.info("Enabled model CPU offload (low VRAM mode)")
+        else:
+            self._pipe.to(self.device)
+        self._optimize_for_rocm()
 
     def _load_flux(self, low_vram: bool = False) -> None:
         """Load FLUX.1 model using diffusers."""
@@ -345,21 +446,13 @@ class MultiModelEngine:
         model_path = download_model(self.model_key)
         self._local_path = model_path
 
-        dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
-
         self._pipe = FluxPipeline.from_pretrained(
             str(model_path),
-            torch_dtype=dtype,
+            torch_dtype=self.dtype,
             low_cpu_mem_usage=True,
         )
-
-        if low_vram:
-            self._pipe.enable_model_cpu_offload()
-        else:
-            self._pipe.to(self.device)
-
-        self._pipe.eval()
-        logger.info(f"Loaded FLUX.1-schnell on {self.device}")
+        self._offload_model(low_vram)
+        logger.info(f"Loaded {self.model_info.name} on {self.device} (dtype={self.dtype})")
 
     def _load_sdxl(self, low_vram: bool = False) -> None:
         """Load SDXL-Turbo model using diffusers."""
@@ -368,86 +461,61 @@ class MultiModelEngine:
         model_path = download_model(self.model_key)
         self._local_path = model_path
 
-        variant = "fp16" if self.device == "cuda" else None
-        dtype = torch.float16 if self.device == "cuda" else torch.float32
+        variant = "fp16" if self.device != "cpu" else None
+        load_kwargs = {"torch_dtype": self.dtype, "low_cpu_mem_usage": True}
+        if variant and self.model_info.quantization != "fp16":
+            load_kwargs["variant"] = variant
 
         self._pipe = AutoPipelineForText2Image.from_pretrained(
-            str(model_path),
-            torch_dtype=dtype,
-            variant=variant,
-            low_cpu_mem_usage=True,
+            str(model_path), **load_kwargs,
         )
-
-        if low_vram:
-            self._pipe.enable_model_cpu_offload()
-        else:
-            self._pipe.to(self.device)
-
-        self._pipe.eval()
-        logger.info(f"Loaded SDXL-Turbo on {self.device}")
+        self._offload_model(low_vram)
+        logger.info(f"Loaded {self.model_info.name} on {self.device} (dtype={self.dtype})")
 
     def _load_pixart(self, low_vram: bool = False) -> None:
         """Load PixArt-Alpha model using diffusers."""
-        from diffusers import AutoPipelineForText2Image
+        from diffusers import PixArtAlphaPipeline
 
         model_path = download_model(self.model_key)
         self._local_path = model_path
 
-        dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
-
-        self._pipe = AutoPipelineForText2Image.from_pretrained(
+        self._pipe = PixArtAlphaPipeline.from_pretrained(
             str(model_path),
-            torch_dtype=dtype,
+            torch_dtype=self.dtype,
             low_cpu_mem_usage=True,
         )
-
-        if low_vram:
-            self._pipe.enable_model_cpu_offload()
-        else:
-            self._pipe.to(self.device)
-
-        self._pipe.eval()
-        logger.info(f"Loaded PixArt-Alpha on {self.device}")
+        self._offload_model(low_vram)
+        logger.info(f"Loaded {self.model_info.name} on {self.device} (dtype={self.dtype})")
 
     def _load_kolors(self, low_vram: bool = False) -> None:
         """Load Kolors model using diffusers."""
+        from diffusers import KolorsPipeline
+
+        model_path = download_model(self.model_key)
+        self._local_path = model_path
+
+        self._pipe = KolorsPipeline.from_pretrained(
+            str(model_path),
+            torch_dtype=self.dtype,
+            low_cpu_mem_usage=True,
+        )
+        self._offload_model(low_vram)
+        logger.info(f"Loaded {self.model_info.name} on {self.device} (dtype={self.dtype})")
+
+    def _load_diffusers_pipeline(self, low_vram: bool = False) -> None:
+        """Load Z-Image or other flow models using diffusers pipeline."""
         from diffusers import AutoPipelineForText2Image
 
         model_path = download_model(self.model_key)
         self._local_path = model_path
 
-        dtype = torch.bfloat16 if self.device == "cuda" else torch.float32
-
         self._pipe = AutoPipelineForText2Image.from_pretrained(
             str(model_path),
-            torch_dtype=dtype,
+            torch_dtype=self.dtype,
             low_cpu_mem_usage=True,
         )
-
-        if low_vram:
-            self._pipe.enable_model_cpu_offload()
-        else:
-            self._pipe.to(self.device)
-
-        self._pipe.eval()
-        logger.info(f"Loaded Kolors on {self.device}")
-
-    def _load_zimage(self) -> None:
-        """Load Z-Image model using local loader."""
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-        from utils import ensure_model_weights, load_from_local_dir
-
-        resolved = resolve_model_path()
-        model_path = ensure_model_weights(resolved, repo_id=self.model_info.repo_id, verify=False)
-        self._local_path = model_path
-
-        self._pipe = load_from_local_dir(
-            str(model_path),
-            device=self.device,
-            dtype=torch.bfloat16 if self.device == "cuda" else torch.float32,
-        )
-
-        logger.info(f"Loaded Z-Image-Turbo on {self.device}")
+        self._offload_model(low_vram)
+        logger.info(f"Loaded {self.model_info.name} on {self.device} (dtype={self.dtype})")
 
     def generate(
         self,
@@ -460,31 +528,23 @@ class MultiModelEngine:
         seed: int = 42,
         **kwargs,
     ):
-        """Generate an image."""
+        """Generate an image using the unified interface."""
         if self._pipe is None:
             self.load()
 
         num_inference_steps = num_inference_steps or self.model_info.default_steps
+        logger.info(f"Generating on {self.device} (rocm={self.is_rocm}, "
+                    f"dtype={self.dtype}, steps={num_inference_steps})")
 
-        if self.model_info.model_type == "zimage":
-            return self._generate_zimage(
-                prompt,
-                height=height,
-                width=width,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                seed=seed,
-            )
-        else:
-            return self._generate_diffusers(
-                prompt,
-                height=height,
-                width=width,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                seed=seed,
-                **kwargs,
-            )
+        return self._generate_diffusers(
+            prompt,
+            height=height,
+            width=width,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+            seed=seed,
+            **kwargs,
+        )
 
     def _generate_diffusers(
         self,
@@ -497,13 +557,14 @@ class MultiModelEngine:
         seed: int,
         **kwargs,
     ):
-        """Generate using diffusers pipeline."""
-        import gc
-
+        """Generate using diffusers pipeline with ROCm memory management."""
         torch.cuda.empty_cache()
         gc.collect()
 
-        generator = torch.Generator(self.device).manual_seed(seed)
+        generator_device = self.device
+        if self.is_rocm and hasattr(self._pipe, "device"):
+            generator_device = self._pipe.device
+        generator = torch.Generator(generator_device).manual_seed(seed)
 
         if self.model_info.model_type == "sdxl":
             height = min(height, 1024)
@@ -523,39 +584,6 @@ class MultiModelEngine:
         gc.collect()
 
         return result.images[0]
-
-    def _generate_zimage(
-        self,
-        prompt: str,
-        *,
-        height: int,
-        width: int,
-        num_inference_steps: int,
-        guidance_scale: float,
-        seed: int,
-        **kwargs,
-    ):
-        """Generate using Z-Image native pipeline."""
-        from zimage import generate as zimage_generate
-        from .core import _detect_gpu_vram, _should_vae_offload
-
-        generator = torch.Generator(self.device).manual_seed(seed)
-        gpu_vram = _detect_gpu_vram()
-        do_offload = _should_vae_offload(gpu_vram)
-
-        images = zimage_generate(
-            prompt=prompt,
-            **self._pipe,
-            height=height,
-            width=width,
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
-            generator=generator,
-            vae_offload=do_offload,
-            tiled_vae=do_offload,
-        )
-
-        return images[0]
 
     def batch_generate(
         self,
@@ -586,35 +614,27 @@ class MultiModelEngine:
 
 
 def list_downloaded_models() -> list[str]:
-    """List all downloaded models."""
+    """List all downloaded models in models/ directory."""
     downloaded = []
     for model_key, info in AVAILABLE_MODELS.items():
         model_dir = get_model_dir(model_key)
         if model_dir.exists() and any(model_dir.iterdir()):
             downloaded.append(model_key)
-    if (Path.cwd() / "Z-Image-Turbo" / "model_index.json").exists():
-        if "z-image-turbo" not in downloaded:
-            downloaded.append("z-image-turbo")
+    for model_key in list(AVAILABLE_MODELS.keys()):
+        model_dir = get_model_dir(model_key)
+        if (model_dir / "model_index.json").exists() and model_key not in downloaded:
+            downloaded.append(model_key)
     return downloaded
 
 
 def is_downloaded(model_key: str) -> bool:
-    """Check if a specific model is downloaded."""
-    if model_key == "z-image-turbo":
-        resolved = resolve_model_path()
-        return Path(resolved).exists() and (Path(resolved) / "model_index.json").exists()
+    """Check if a specific model is downloaded to models/ directory."""
     model_dir = get_model_dir(model_key)
     return model_dir.exists() and any(model_dir.iterdir())
 
 
 def _resolve_model_path_for_size(model_key: str) -> Optional[Path]:
     """Resolve the actual on-disk path for size calculation."""
-    if model_key == "z-image-turbo":
-        resolved = resolve_model_path()
-        p = Path(resolved)
-        if p.exists() and (p / "model_index.json").exists():
-            return p
-        return None
     model_dir = get_model_dir(model_key)
     if model_dir.exists() and any(model_dir.iterdir()):
         return model_dir

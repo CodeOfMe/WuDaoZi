@@ -1,5 +1,9 @@
-"""Core engine for WuDaoZi painting studio."""
+"""Core engine for WuDaoZi painting studio.
 
+Optimized for ROCm/AMD GPUs (7900 XTX etc.) with unified models/ directory.
+"""
+
+import gc
 import json
 import os
 import sys
@@ -12,7 +16,13 @@ warnings.filterwarnings("ignore")
 
 import torch  # noqa: E402
 
-ZIMAGE_SRC = str(Path(__file__).resolve().parent.parent.parent / "src")
+from loguru import logger  # noqa: E402
+
+_PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+
+_MODELS_DIR = Path(os.environ.get("WUDAOZI_MODELS_DIR", str(_PACKAGE_ROOT / "models")))
+
+ZIMAGE_SRC = str(_PACKAGE_ROOT.parent / "src")
 
 if ZIMAGE_SRC not in sys.path:
     sys.path.insert(0, ZIMAGE_SRC)
@@ -26,17 +36,51 @@ from utils import (  # noqa: E402
 from zimage import generate as zimage_generate  # noqa: E402
 
 
+def _is_rocm() -> bool:
+    """Detect if running on ROCm/AMD GPU."""
+    if not torch.cuda.is_available():
+        return False
+    try:
+        return hasattr(torch.version, "hip") and torch.version.hip is not None
+    except Exception:
+        return False
+
+
 def select_device() -> str:
+    """Select best compute device, with ROCm awareness."""
     if torch.cuda.is_available():
         return "cuda"
     try:
         import torch_xla.core.xla_model as xm
-
         return str(xm.xla_device())
     except (ImportError, RuntimeError):
         if torch.backends.mps.is_available():
             return "mps"
     return "cpu"
+
+
+def _get_compute_dtype(device: str = "") -> torch.dtype:
+    """Get optimal dtype for device - float16 for ROCm, bfloat16 for CUDA, float32 for CPU."""
+    device = device or select_device()
+    if device == "cpu":
+        return torch.float32
+    if _is_rocm():
+        return torch.float16
+    return torch.bfloat16
+
+
+def _detect_gpu_vram() -> int:
+    if not torch.cuda.is_available():
+        return 0
+    try:
+        props = torch.cuda.get_device_properties(0)
+        return getattr(props, "total_memory", getattr(props, "total_mem", 0))
+    except Exception:
+        return 0
+
+
+def _should_vae_offload(gpu_vram: int) -> bool:
+    return 0 < gpu_vram < 30 * 1024 ** 3
 
 
 def slugify(text: str, max_len: int = 60) -> str:
@@ -87,14 +131,15 @@ class SeriesConfig:
 
 
 def resolve_model_path(explicit: str = "") -> str:
-    """Resolve model path with priority: explicit > env > config > auto > default.
+    """Resolve model path with priority: explicit > env > config > models/ > sibling > fallback.
 
     Priority order:
       1. Explicit path passed by caller (CLI --model / API model_path)
       2. WUDAOZI_MODEL_PATH environment variable
       3. ~/.wudaozi/config.json → {"model_path": "..."}
-      4. Auto-detect: Z-Image-Turbo/ directory next to WuDaoZi/
-      5. Fallback: ckpts/Z-Image-Turbo (relative, may trigger HuggingFace download)
+      4. models/z-image-turbo/ in package directory
+      5. Auto-detect: Tongyi-MAI/Z-Image-Turbo/ sibling directory
+      6. Fallback: ckpts/Z-Image-Turbo (relative, may trigger HuggingFace download)
     """
     if explicit:
         return explicit
@@ -109,26 +154,22 @@ def resolve_model_path(explicit: str = "") -> str:
                 return cfg["model_path"]
         except (json.JSONDecodeError, OSError):
             pass
-    sibling = Path(__file__).resolve().parent.parent.parent / "Z-Image-Turbo"
+    models_dir = _MODELS_DIR / "z-image-turbo"
+    if models_dir.is_dir() and (models_dir / "model_index.json").exists():
+        return str(models_dir)
+    sibling = _PACKAGE_ROOT.parent / "Tongyi-MAI" / "Z-Image-Turbo"
     if sibling.is_dir() and (sibling / "model_index.json").exists():
         return str(sibling)
     return "ckpts/Z-Image-Turbo"
 
 
-def _detect_gpu_vram() -> int:
-    if not torch.cuda.is_available():
-        return 0
-    try:
-        return torch.cuda.get_device_properties(0).total_mem
-    except Exception:
-        return 0
-
-
-def _should_vae_offload(gpu_vram: int) -> bool:
-    return 0 < gpu_vram < 30 * 1024 ** 3
-
-
 class WuDaoZiEngine:
+    """Core Z-Image engine with ROCm/AMD GPU support.
+
+    Automatically detects ROCm runtime and configures optimal dtype
+    (float16 for ROCm/AMD, bfloat16 for NVIDIA) and memory settings.
+    """
+
     def __init__(
         self,
         model_path: str = "",
@@ -142,7 +183,8 @@ class WuDaoZiEngine:
     ):
         self.model_path = resolve_model_path(model_path)
         self.device = device or select_device()
-        self.dtype = dtype or torch.bfloat16
+        self.is_rocm = _is_rocm()
+        self.dtype = dtype or _get_compute_dtype(self.device)
         self.compile_model = compile_model
         self.attention_backend = attention_backend or os.environ.get("ZIMAGE_ATTENTION", "_native_flash")
         self.low_vram = low_vram or bool(int(os.environ.get("WUDAOZI_LOW_VRAM", "0")))
@@ -157,6 +199,10 @@ class WuDaoZiEngine:
             self.tiled_vae = tiled_vae
         self._components = None
         self._loaded = False
+
+        if self.is_rocm:
+            logger.info(f"WuDaoZiEngine: ROCm detected ({torch.cuda.get_device_name(0)}), "
+                       f"dtype={self.dtype}, vae_offload={self.vae_offload}")
 
     def load(self) -> None:
         if self._loaded:
@@ -253,57 +299,66 @@ class WuDaoZiEngine:
         seed: int = 42,
         negative_prompt: Optional[str] = None,
     ):  # noqa: ANN204
-        import gc
-
         comp = self.components
+
+        # Apply ROCm memory optimizations before generation
+        if self.is_rocm:
+            os.environ.setdefault("PYTORCH_HIP_ALLOC_CONF", "expandable_segments:True")
+            torch.cuda.empty_cache()
+            gc.collect()
 
         # Check if using diffusers pipeline (low_vram mode)
         if "pipe" in comp:
             pipe = comp["pipe"]
 
-            # Clear GPU memory before generation
             torch.cuda.empty_cache()
             gc.collect()
 
-            generator = torch.Generator("cpu").manual_seed(seed)
+            generator_device = "cpu" if (self.low_vram or self.is_rocm) else self.device
+            generator = torch.Generator(generator_device).manual_seed(seed)
 
-            # Use latent output type to avoid VAE OOM, then decode on CPU
-            result = pipe(
-                prompt=prompt,
-                height=height,
-                width=width,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-                generator=generator,
-                output_type="latent",
-            )
+            # For low VRM or ROCm: use latent output to avoid VAE OOM
+            use_latent_decode = self.low_vram or (self.is_rocm and _detect_gpu_vram() < 28 * 1024**3)
 
-            # Move latents to CPU for VAE decode
-            latents = result.images.to("cpu")
+            if use_latent_decode:
+                result = pipe(
+                    prompt=prompt,
+                    height=height,
+                    width=width,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                    output_type="latent",
+                )
 
-            # Decode VAE on CPU
-            pipe.vae.to("cpu")
-            with torch.no_grad():
-                # Scale latents for VAE
-                latents = latents / pipe.vae.config.scaling_factor + getattr(pipe.vae.config, "shift_factor", 0.0)
-                image = pipe.vae.decode(latents, return_dict=False)[0]
+                latents = result.images.to("cpu")
+                pipe.vae.to("cpu")
+                with torch.no_grad():
+                    latents = latents / pipe.vae.config.scaling_factor + getattr(pipe.vae.config, "shift_factor", 0.0)
+                    image = pipe.vae.decode(latents, return_dict=False)[0]
+                pipe.vae.to("cpu")
 
-            # Move VAE back to CPU (it should already be there)
-            pipe.vae.to("cpu")
+                image = (image / 2 + 0.5).clamp(0, 1)
+                image = image.cpu().permute(0, 2, 3, 1).float().numpy()
+                image = (image * 255).round().astype("uint8")
+                from PIL import Image
+                image = Image.fromarray(image[0])
+            else:
+                result = pipe(
+                    prompt=prompt,
+                    height=height,
+                    width=width,
+                    num_inference_steps=num_inference_steps,
+                    guidance_scale=guidance_scale,
+                    generator=generator,
+                )
+                image = result.images[0]
 
-            # Convert to PIL image
-            image = (image / 2 + 0.5).clamp(0, 1)
-            image = image.cpu().permute(0, 2, 3, 1).float().numpy()
-            image = (image * 255).round().astype("uint8")
-            from PIL import Image
-            image = Image.fromarray(image[0])
-
-            # Clear GPU memory after generation
             torch.cuda.empty_cache()
             gc.collect()
-
             return image
 
+        # Native Z-Image generation
         generator = torch.Generator(self.device).manual_seed(seed)
         kwargs = dict(
             prompt=prompt,
