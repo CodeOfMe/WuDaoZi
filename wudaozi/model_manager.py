@@ -1,7 +1,10 @@
-"""Model manager for downloading and managing multiple quantized image generation models."""
+"""Model manager for downloading and managing multiple quantized image generation models.
+
+Supports downloading from ModelScope (preferred for China users) and HuggingFace (fallback).
+"""
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Protocol
 
@@ -9,6 +12,19 @@ import torch
 from loguru import logger
 
 from .core import resolve_model_path
+
+_DEFAULT_SOURCE = "modelscope"
+
+_DOWNLOAD_SOURCES = {
+    "modelscope": {
+        "name": "ModelScope",
+        "env_var": "WUDAOZI_DOWNLOAD_SOURCE",
+    },
+    "huggingface": {
+        "name": "HuggingFace",
+        "env_var": "WUDAOZI_DOWNLOAD_SOURCE",
+    },
+}
 
 
 class ModelProtocol(Protocol):
@@ -31,6 +47,8 @@ class ModelInfo:
     quantization: Optional[str] = None
     size_gb: float = 0.0
     local_path: Optional[str] = None
+    modelscope_id: str = ""
+    hf_id: str = ""
 
 
 AVAILABLE_MODELS = {
@@ -42,6 +60,8 @@ AVAILABLE_MODELS = {
         default_steps=8,
         supports_guidance=False,
         size_gb=12.0,
+        modelscope_id="Tongyi-MAI/Z-Image-Turbo",
+        hf_id="Tongyi-MAI/Z-Image-Turbo",
     ),
     "flux-schnell": ModelInfo(
         name="FLUX.1-schnell",
@@ -51,6 +71,8 @@ AVAILABLE_MODELS = {
         default_steps=4,
         supports_guidance=False,
         size_gb=24.0,
+        modelscope_id="AI-ModelScope/FLUX.1-schnell",
+        hf_id="black-forest-labs/FLUX.1-schnell",
     ),
     "flux-schnell-quantized": ModelInfo(
         name="FLUX.1-schnell-4bit",
@@ -61,6 +83,8 @@ AVAILABLE_MODELS = {
         supports_guidance=False,
         quantization="4bit",
         size_gb=7.0,
+        modelscope_id="AI-ModelScope/FLUX.1-schnell",
+        hf_id="strangezoo/flux-schnell-4bit",
     ),
     "sdxl-turbo": ModelInfo(
         name="SDXL-Turbo",
@@ -70,6 +94,8 @@ AVAILABLE_MODELS = {
         default_steps=1,
         supports_guidance=False,
         size_gb=6.5,
+        modelscope_id="AI-ModelScope/stable-diffusion-xl-turbo",
+        hf_id="stabilityai/sdxl-turbo",
     ),
     "sdxl-turbo-fp16": ModelInfo(
         name="SDXL-Turbo-FP16",
@@ -80,6 +106,8 @@ AVAILABLE_MODELS = {
         supports_guidance=False,
         quantization="fp16",
         size_gb=6.5,
+        modelscope_id="AI-ModelScope/stable-diffusion-xl-turbo",
+        hf_id="stabilityai/sdxl-turbo",
     ),
     "playground-v2": ModelInfo(
         name="Playground-v2-1024px",
@@ -89,6 +117,8 @@ AVAILABLE_MODELS = {
         default_steps=20,
         supports_guidance=True,
         size_gb=5.5,
+        modelscope_id="AI-ModelScope/playground-v2.5-1024px",
+        hf_id="playgroundai/playground-v2-1024px",
     ),
     "pixart-alpha": ModelInfo(
         name="PixArt-Alpha",
@@ -98,6 +128,8 @@ AVAILABLE_MODELS = {
         default_steps=20,
         supports_guidance=True,
         size_gb=2.4,
+        modelscope_id="AI-ModelScope/PixArt-alpha",
+        hf_id="PixArt-alpha/PixArt-XL-2-1024-MS",
     ),
     "pixart-alpha-quantized": ModelInfo(
         name="PixArt-Alpha-4bit",
@@ -108,6 +140,8 @@ AVAILABLE_MODELS = {
         supports_guidance=True,
         quantization="4bit",
         size_gb=2.2,
+        modelscope_id="AI-ModelScope/PixArt-alpha",
+        hf_id="PixArt-alpha/PixArt-XL-2-1024-MS-4bit",
     ),
     "kolors": ModelInfo(
         name="Kolors",
@@ -117,6 +151,8 @@ AVAILABLE_MODELS = {
         default_steps=20,
         supports_guidance=True,
         size_gb=13.0,
+        modelscope_id="Kwai-Kolors/Kolors",
+        hf_id="Kwai-Kolors/Kolors",
     ),
     "aura-flow": ModelInfo(
         name="Aura-Flow",
@@ -126,6 +162,8 @@ AVAILABLE_MODELS = {
         default_steps=20,
         supports_guidance=True,
         size_gb=12.0,
+        modelscope_id="AI-ModelScope/AuraFlow",
+        hf_id="fal/AuraFlow",
     ),
 }
 
@@ -148,18 +186,30 @@ def get_model_info(model_key: str) -> Optional[ModelInfo]:
     return AVAILABLE_MODELS.get(model_key)
 
 
-def download_model(model_key: str, force: bool = False) -> Path:
-    """Download a model from HuggingFace.
+def _get_download_source() -> str:
+    """Determine download source: modelscope or huggingface.
+
+    Priority: WUDAOZI_DOWNLOAD_SOURCE env var > defaults to modelscope.
+    """
+    import os
+    source = os.environ.get("WUDAOZI_DOWNLOAD_SOURCE", "").strip().lower()
+    if source in ("huggingface", "hf"):
+        return "huggingface"
+    return "modelscope"
+
+
+def download_model(model_key: str, force: bool = False, source: str = "") -> Path:
+    """Download a model from ModelScope (preferred) or HuggingFace.
 
     Args:
         model_key: Key of the model to download
         force: Force re-download even if exists
+        source: Download source override ('modelscope' or 'huggingface').
+                Empty string uses default (modelscope).
 
     Returns:
         Path to the downloaded model
     """
-    from huggingface_hub import snapshot_download
-
     model_info = AVAILABLE_MODELS.get(model_key)
     if not model_info:
         raise ValueError(f"Unknown model: {model_key}")
@@ -171,19 +221,59 @@ def download_model(model_key: str, force: bool = False) -> Path:
             logger.info(f"Model already exists at {target_dir}")
             return target_dir
 
-    logger.info(f"Downloading {model_info.name} from {model_info.repo_id}...")
+    source = source or _get_download_source()
     target_dir.mkdir(parents=True, exist_ok=True)
+
+    if source == "huggingface":
+        return _download_from_huggingface(model_info, target_dir)
+    else:
+        try:
+            return _download_from_modelscope(model_info, target_dir)
+        except Exception as e:
+            logger.warning(f"ModelScope download failed: {e}")
+            logger.info("Falling back to HuggingFace...")
+            return _download_from_huggingface(model_info, target_dir)
+
+
+def _download_from_modelscope(model_info: ModelInfo, target_dir: Path) -> Path:
+    """Download model from ModelScope."""
+    from modelscope import snapshot_download as ms_snapshot_download
+
+    ms_id = model_info.modelscope_id
+    if not ms_id:
+        raise ValueError(f"No ModelScope ID for {model_info.name}, use HuggingFace instead")
+
+    logger.info(f"Downloading {model_info.name} from ModelScope ({ms_id})...")
+    try:
+        ms_snapshot_download(
+            model_id=ms_id,
+            local_dir=str(target_dir),
+        )
+        logger.success(f"Downloaded {model_info.name} from ModelScope to {target_dir}")
+    except Exception as e:
+        logger.error(f"ModelScope download failed: {e}")
+        raise
+
+    return target_dir
+
+
+def _download_from_huggingface(model_info: ModelInfo, target_dir: Path) -> Path:
+    """Download model from HuggingFace."""
+    from huggingface_hub import snapshot_download
+
+    hf_id = model_info.hf_id or model_info.repo_id
+    logger.info(f"Downloading {model_info.name} from HuggingFace ({hf_id})...")
 
     try:
         snapshot_download(
-            repo_id=model_info.repo_id,
+            repo_id=hf_id,
             local_dir=str(target_dir),
             local_dir_use_symlinks=False,
             resume_download=True,
         )
-        logger.success(f"Downloaded {model_info.name} to {target_dir}")
+        logger.success(f"Downloaded {model_info.name} from HuggingFace to {target_dir}")
     except Exception as e:
-        logger.error(f"Failed to download {model_info.name}: {e}")
+        logger.error(f"HuggingFace download failed: {e}")
         raise
 
     return target_dir

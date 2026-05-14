@@ -179,17 +179,21 @@ def slugify(text, max_len=40):
     return result[:max_len].rstrip("-") or "output"
 
 
-def download_model_fn(model_key):
+def download_model_fn(model_key, source):
     if not model_key:
         return "Please select a model to download.", _refresh_models_fn()
     from .model_manager import download_model, AVAILABLE_MODELS
     info = AVAILABLE_MODELS.get(model_key)
     if not info:
         return f"Unknown model: {model_key}", _refresh_models_fn()
+    source = (source or "modelscope").strip().lower()
+    if source not in ("modelscope", "huggingface"):
+        source = "modelscope"
     try:
-        path = download_model(model_key)
+        path = download_model(model_key, source=source)
         size_mb = sum(f.stat().st_size for f in Path(path).rglob("*") if f.is_file()) / 1024 / 1024
-        return f"Downloaded {info.name} ({size_mb:.0f} MB) to {path}", _refresh_models_fn()
+        source_label = "ModelScope" if source == "modelscope" else "HuggingFace"
+        return f"Downloaded {info.name} from {source_label} ({size_mb:.0f} MB) to {path}", _refresh_models_fn()
     except Exception as e:
         return f"Download failed: {e}", _refresh_models_fn()
 
@@ -200,8 +204,10 @@ def _refresh_models_fn():
     for key, info in AVAILABLE_MODELS.items():
         downloaded = is_downloaded(key)
         size_info = get_model_size(key)
-        status = f"downloaded ({size_info['size_gb']:.1f} GB)" if downloaded else "not downloaded"
-        lines.append(f"- **{info.name}** (`{key}`): {info.description} [{status}]")
+        status = f"\u2705 downloaded ({size_info['size_gb']:.1f} GB)" if downloaded else "\u274c not downloaded"
+        ms_id = info.modelscope_id or "N/A"
+        lines.append(f"- **{info.name}** (`{key}`): {info.description} {status}")
+        lines.append(f"  ModelScope: `{ms_id}` | HuggingFace: `{info.hf_id}`")
     return "\n".join(lines)
 
 
@@ -380,19 +386,28 @@ def build_app():
                 )
 
             with gr.Tab("\U0001f4e6 Models"):
-                gr.Markdown("### Download & manage models\nModels are stored in `./models/` directory.")
+                gr.Markdown(
+                    "### Download & manage models\n"
+                    "Models are stored in `./models/` directory. "
+                    "**ModelScope** is preferred (faster in China). Falls back to HuggingFace if ModelScope fails."
+                )
                 models_status = gr.Markdown(_refresh_models_fn())
                 with gr.Row():
                     dl_model = gr.Dropdown(
                         choices=model_choices,
                         value="flux-schnell",
-                        label="Select model to download",
+                        label="Select model",
+                    )
+                    dl_source = gr.Radio(
+                        choices=["modelscope", "huggingface"],
+                        value="modelscope",
+                        label="Download source",
                     )
                     dl_btn = gr.Button("\U0001f4e5 Download", variant="primary")
                 dl_result = gr.Textbox(label="Download Status", interactive=False, lines=3)
                 refresh_btn = gr.Button("\U0001f504 Refresh List")
 
-                dl_btn.click(fn=download_model_fn, inputs=[dl_model], outputs=[dl_result, models_status])
+                dl_btn.click(fn=download_model_fn, inputs=[dl_model, dl_source], outputs=[dl_result, models_status])
                 refresh_btn.click(fn=lambda: _refresh_models_fn(), outputs=[models_status])
 
     return app
