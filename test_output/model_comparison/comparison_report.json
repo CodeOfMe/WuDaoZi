@@ -1,0 +1,48 @@
+{
+  "timestamp": "2026-05-17T10:05:17.448870",
+  "prompt": "A beautiful traditional Chinese landscape painting with mountains, rivers, and a small boat",
+  "seed": 42,
+  "size": "1024x1024",
+  "gpu_info": {
+    "gpu": "Radeon RX 7900 XTX",
+    "vram_gb": 23.98,
+    "torch": "2.11.0+rocm7.2",
+    "rocm": true,
+    "hip": "7.2.26015"
+  },
+  "results": [
+    {
+      "model": "SDXL-Turbo",
+      "model_key": "sdxl-turbo",
+      "pipeline": "StableDiffusionXLPipeline",
+      "load_time": 5.32,
+      "generate_time": 2.02,
+      "steps": 4,
+      "guidance_scale": 0.0,
+      "peak_vram_gb": 9.76,
+      "output": "/home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/test_output/model_comparison/sdxl-turbo.png",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "success": true
+    },
+    {
+      "model": "Kolors",
+      "model_key": "kolors",
+      "pipeline": "KolorsPipeline",
+      "load_time": 9.55,
+      "generate_time": 6.54,
+      "steps": 20,
+      "guidance_scale": 7.5,
+      "peak_vram_gb": 19.91,
+      "output": "/home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/test_output/model_comparison/kolors.png",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "success": true
+    }
+  ],
+  "comparison_grid": "/home/fred/Documents/GitHub/CodeOfMe/WuDaoZi/test_output/model_comparison/comparison_grid.png"
+}
